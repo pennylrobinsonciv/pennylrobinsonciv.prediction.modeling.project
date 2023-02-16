@@ -1,0 +1,156 @@
+---
+title: "Prediction Modeling Course Project"
+author: "Penny Robinson"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE)
+```
+Overview: This study will attempt to predict the manner in which dumbbell exercises were conducted based on the case study - "Qualitative Activity Recognition of Weight Lifting Exercises", authored by E. Velloso, A. Bulling, H. Gellersen, Q. Ugulino, and H. Fuks. The study can be found here: (http://groupware.les.inf.puc-rio.br/har). The case study focused on participants performing dumbbell bicep curls in five different manners: correctly and four other ways. Measurements were collected via wearable devices and sensors on the belt (worn across the back), glove, arm band, and dumbbell. Roll, pitch, and yaw angles were collected along with the following features for each: mean, variance, standard deviation, maximum, minimum, amplitude, kurtosis, and skewness.
+
+The following packages were installed and used in support of the analysi: 
+dplyr, ggplot2, randomForest, and caret
+
+```{r,echo=FALSE, results='hide', message=FALSE}
+#install.packages("dplyr")
+#install.packages("ggplot2")
+#install.packages("lattice")
+#install.packages("caret")
+#install.packages("randomForest")
+```
+
+
+```{r, echo=FALSE, results='hide', message=FALSE}
+library(dplyr)
+library(ggplot2)
+library(lattice)
+library(caret)
+library(randomForest)
+```
+Data:
+
+Training and test data were downloaded from the below:
+
+Training – https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+Test - https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The datasets were loaded as follows: 
+
+
+```{r}
+untidy_train<-read.csv("pml-training.csv",header=TRUE)
+untidy_test<-read.csv("pml-testing.csv", header=TRUE)
+```
+
+The training set was untidy and contained a large number of columns that was eventually reduced in order to narrow down to the features that would best help in the prediction model. The username, raw time stamps, roll, pitch, yaw, and total acceleration for each of the sensors (belt, glove, armband, and dumbbell) were used. The other features such as mean, variance, standard deviation, maximum, minimum, amplitude, kurtosis, and skewness columns were removed as they either contained no data, NA data, or were only subcomponents of a particular Euler angle. The tidy dataset resulted in 20 columns (including the classification column) and 15,699 rows.
+
+
+```{r }
+tidy_train<-select(untidy_train, c(2,3,4,8,9,10,11, 46,47,48,49,84,85,86,102,122, 123, 124, 140, 160))
+tidy_train<-tidy_train %>% mutate_if (is.numeric, as.numeric)
+tidy_train<-tidy_train %>% mutate_if(is.character, as.factor)
+```
+
+Next, a portion of the training set was reserved for validation in order to test the model before using it on the true test data.
+
+```{r}
+split_tidy_train<-createDataPartition(tidy_train$classe, p=.8, list=FALSE)
+#selecting 20% of data for validation
+valset<-tidy_train[-split_tidy_train,]
+trainset<-tidy_train[split_tidy_train,]
+```
+
+The test data was cleaned similarly to the training data in order to run the prediction model later.
+
+```{r}
+tidy_test<-select(untidy_test, c(2,3,4,8,9,10,11, 46,47,48,49,84,85,86,102,122, 123, 124, 140))
+tidy_test<-tidy_test %>% mutate_if (is.numeric, as.numeric)
+tidy_test<-tidy_test %>% mutate_if(is.character, as.factor)
+```
+
+Below is a quick look at the now tidy training set - named trainset.
+
+```{r}
+str(trainset)
+```
+
+With the dataset cleaned, the variables are viewed to find any relationships or correlations in the data. 
+
+```{r}
+xdata<-trainset[,4:19]
+xtime<-trainset[,2:3]
+ydata<-trainset[,20]
+featurePlot(x=xdata, y=ydata, plot="box")
+featurePlot(x=xtime, y=ydata, plot="box")
+```
+
+The classification (class levels) and corresponding percentage of the training set shown below correspond to A: exactly according to the specification, B: throwing the elbows, C: lifting the dumbbell only halfway, D: lowering the dumbbell only halfway, and E: throwing the hips to the front.
+
+
+```{r}
+levels(trainset$classe)
+percentage<-prop.table(table(trainset$classe))*100
+cbind(freq=table(trainset$classe),percentage=percentage)
+```
+A correlation was conducted between the variables. The relationship between the roll, pitch, yaw, and acceleration of the belt sensor had the highest correlations. This makes sense as the movement of the back area would cause those three angles and acceleration to be dependent upon one another. The correlation of the other variables amongests each other was generally low.
+
+```{r}
+corrMatrix<-cor(trainset[,2:19])
+diag(corrMatrix)=0
+corrMatrix
+```
+
+Several models were used to as a way to evaluate the algorithms to see which model would be best for predicting the classification of how dumbbell exercise was conducted based on the different roll, pitch, yaw, and acceleration features from the 4 different sensors.
+
+Ten fold cross validation was run with the linear discriminant analysis, classification and regression trees, K nearest neighbors, and random forest models.
+
+```{r, echo=FALSE, results='hide', message=FALSE, warning=FALSE}
+control<-trainControl(method="cv", number=10)
+metric<-"Accuracy"
+#linear discriminant analysis (LDA)
+set.seed(7)
+fit.lda<-train(classe~., data=trainset, method="lda", metric=metric, trControl=control)
+#classification and regression trees (CART)
+set.seed(7)
+fit.cart<-train(classe~., data=trainset, method="rpart", metric=metric, trControl=control)
+#k nearest neighbors
+set.seed(7)
+fit.knn<-train(classe~., data=trainset, method="knn", metric=metric, trControl=control)
+#random forest best so far .99 accuracy
+set.seed(7)
+fit.rf<-train(classe~., data=trainset, method="rf", metric=metric, trControl=control)
+```
+A summary of all the models are shown below. 
+```{r}
+allfits<-resamples(list(lda=fit.lda, cart=fit.cart, knn=fit.knn, rf=fit.rf))
+summary(allfits)
+```
+The random forest model was the best model with a .99 accuracy and will be used for prediction.
+```{r}
+print(fit.rf)
+```
+A confusion matrix showing the predicted values from the random forest model versus the actual values will be generated with the training dataset.
+
+```{r}
+confusionMatrix(trainset$classe, predict(fit.rf, trainset))
+```
+The accuracy is good. Again we check the model  by running a confusion matrix with the validation data.
+
+```{r}
+confusionMatrix(valset$classe, predict(fit.rf, valset))
+```
+Since the accuracy again is good, the prediction can be run on the test data with confidence. The test data set was previously cleaned using same process as with training data.
+
+```{r}
+predictionTest<-predict(fit.rf, tidy_test)
+predictionTest
+```
+The classification of how the dumbbell exercises were conducted was predicted for twenty cases in the test set data (shown above).
+
+Summary. The dataset contained a lot of information gathered from the sensors. Once that data was reduced and cleaned to focus on the most relevant variables, a random forest model was fitted to data and then a prediction was conducted on the test data. The results showed that the model was able to accurately predict how the dumbbell exercises were conducted on a separate dataset.
